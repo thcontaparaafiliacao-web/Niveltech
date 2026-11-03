@@ -1,7 +1,88 @@
 
 /* =========================================================
    DEMONSTRAÇÃO FRONT-END
-   Para produção: substitua localStorage por API + banco de dados,
+   Para produção: substitua localStorage por API(async function api(path, options = {}) {
+  const baseUrl = await detectApiBaseUrl();
+  const requestHeaders = {
+    Accept: 'application/json',
+    ...(options.headers || {})
+  };
+
+  if (options.body && !Object.prototype.hasOwnProperty.call(requestHeaders, 'Content-Type')) {
+    requestHeaders['Content-Type'] = 'application/json';
+  }
+
+  const originalMethod = (options.method || (options.body ? 'POST' : 'GET')).toUpperCase();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  const variants = [];
+  const direct = `${baseUrl}${normalizedPath}`;
+  variants.push({ url: direct, method: originalMethod });
+
+  if (normalizedPath.startsWith('/api/')) {
+    variants.push({ url: `${baseUrl}${normalizedPath.replace(/^\/api/, '')}`, method: originalMethod });
+  } else {
+    variants.push({ url: `${baseUrl}/api${normalizedPath}`, method: originalMethod });
+  }
+
+  if (originalMethod === 'POST') {
+    variants.push({ url: direct, method: 'PUT' });
+    if (normalizedPath.startsWith('/api/')) {
+      variants.push({ url: `${baseUrl}${normalizedPath.replace(/^\/api/, '')}`, method: 'PUT' });
+    } else {
+      variants.push({ url: `${baseUrl}/api${normalizedPath}`, method: 'PUT' });
+    }
+  }
+
+  const seen = new Set();
+
+  for (const variant of variants) {
+    const key = `${variant.method}:${variant.url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      const response = await fetch(variant.url, {
+        ...options,
+        method: variant.method,
+        credentials: 'include',
+        headers: requestHeaders
+      });
+
+      const text = await response.text();
+      let payload = {};
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch (error) {
+          payload = { error: text.trim() || 'Erro ao processar a requisição.' };
+        }
+      }
+
+      if (response.ok) {
+        return payload;
+      }
+
+      if (response.status === 405) {
+        continue;
+      }
+
+      const message = payload.error || payload.message || `Erro ao processar a requisição (${response.status}).`;
+      if (response.status === 404) {
+        throw new Error('API não encontrada. Inicie o backend em http://127.0.0.1:5000, use o mesmo host do servidor ou passe ?api=http://IP_DO_SERVIDOR:5000 na URL da página.');
+      }
+
+      throw new Error(message);
+    } catch (error) {
+      if (String(error?.message || '').includes('Método não permitido')) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error('Método não permitido pela API. Verifique se a URL da API e o backend estão corretos e se o endpoint aceita a requisição atual.');
+}) + banco de dados,
    hash de senhas no servidor, sessão segura e autorização RBAC.
    ========================================================= */
 const MANAGERS = [

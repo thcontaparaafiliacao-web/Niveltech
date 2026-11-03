@@ -463,7 +463,7 @@
         </div>
       </div>
 
-      <div class="panel api-config">
+      <div class="panel api-config hidden" aria-hidden="true">
         <h3>Conexão da API</h3>
         <p class="tiny">Use a URL pública ou interna do backend para permitir que clientes de fora da rede local acessem login, pedidos e atendimento.</p>
         <form id="apiConfigForm">
@@ -658,18 +658,21 @@
           apiBaseUrl,
           ...buildSameHostCandidates(),
           ...API_ORIGINS
-        ]));
+        ].filter(Boolean)));
 
         for (const candidate of candidates) {
-          try {
-            const response = await fetch(`${candidate}/health`, { method: 'GET', mode: 'cors' });
-            if (response.ok) {
-              apiBaseUrl = candidate;
-              localStorage.setItem('niveltech_api_base_url', candidate);
-              return candidate;
+          const probePaths = ['/health', '/api/health', '/status'];
+          for (const probePath of probePaths) {
+            try {
+              const response = await fetch(`${candidate}${probePath}`, { method: 'GET', mode: 'cors' });
+              if (response.ok) {
+                apiBaseUrl = candidate;
+                localStorage.setItem('niveltech_api_base_url', candidate);
+                return candidate;
+              }
+            } catch (error) {
+              // tenta a próxima origem/rota.
             }
-          } catch (error) {
-            // a origem atual pode não ser o servidor da API; tenta a próxima alternativa.
           }
         }
 
@@ -681,7 +684,7 @@
           tryStartLocalBackend();
         }
 
-        return apiBaseUrl;
+        return apiBaseUrl || 'http://127.0.0.1:5000';
       })();
 
       return apiBaseUrlPromise;
@@ -705,46 +708,91 @@
         requestHeaders['Content-Type'] = 'application/json';
       }
 
-      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-      const url = `${baseUrl}${normalizedPath}`;
+      const originalPath = path.startsWith('/') ? path : `/${path}`;
+      const originalMethod = (options.method || (options.body ? 'POST' : 'GET')).toUpperCase();
+      const variants = [];
+      const pathVariants = Array.from(new Set([
+        originalPath,
+        originalPath.startsWith('/api/') ? originalPath.replace(/^\/api/i, '') : `/api${originalPath}`,
+        originalPath.startsWith('/api') ? originalPath.replace(/^\/api/i, '') : originalPath
+      ]));
 
-      if (baseUrl && /^https?:\/\//i.test(baseUrl)) {
-        setApiStatus(`Conexão atual: <strong>${baseUrl}</strong>`);
-      }
+      const methodVariants = Array.from(new Set([
+        originalMethod,
+        originalMethod === 'POST' ? 'PUT' : '',
+        originalMethod === 'PUT' ? 'POST' : '',
+        originalMethod === 'GET' ? 'POST' : '',
+        'GET'
+      ].filter(Boolean)));
 
-      let response;
-      try {
-        response = await fetch(url, {
-          ...options,
-          credentials: 'include',
-          headers: requestHeaders
+      pathVariants.forEach(candidatePath => {
+        methodVariants.forEach(candidateMethod => {
+          variants.push({
+            url: `${baseUrl}${candidatePath}`,
+            method: candidateMethod,
+            path: candidatePath,
+            base: baseUrl
+          });
         });
-      } catch (error) {
-        throw new Error('O servidor da aplicação não está disponível. Inicie o backend e tente novamente.');
-      }
+      });
 
-      const text = await response.text();
-      let payload = {};
-      if (text) {
+      let lastError = null;
+
+      for (const variant of variants) {
+        const seen = `${variant.method}:${variant.url}`;
+        if (variant.url.includes('undefined')) continue;
+
         try {
-          payload = JSON.parse(text);
+          const response = await fetch(variant.url, {
+            ...options,
+            method: variant.method,
+            credentials: 'include',
+            headers: requestHeaders
+          });
+
+          const text = await response.text();
+          let payload = {};
+          if (text) {
+            try {
+              payload = JSON.parse(text);
+            } catch (error) {
+              payload = { error: text.trim() || 'Erro ao processar a requisição.' };
+            }
+          }
+
+          if (response.ok) {
+            if (baseUrl && /^https?:\/\//i.test(baseUrl)) {
+              setApiStatus(`Conexão atual: <strong>${baseUrl}</strong>`);
+            }
+            return payload;
+          }
+
+          lastError = payload.error || payload.message || `Erro ao processar a requisição (${response.status}).`;
+          if (response.status === 404) {
+            continue;
+          }
+          if (response.status === 405) {
+            continue;
+          }
+          throw new Error(lastError);
         } catch (error) {
-          payload = { error: text.trim() || 'Erro ao processar a requisição.' };
+          lastError = error && error.message ? error.message : 'Erro ao processar a requisição.';
         }
       }
 
-      if (!response.ok) {
-        const message = payload.error || payload.message || `Erro ao processar a requisição (${response.status}).`;
-        if (response.status === 404) {
-          throw new Error('API não encontrada. Inicie o backend em http://127.0.0.1:5000, use o mesmo host do servidor ou passe ?api=http://IP_DO_SERVIDOR:5000 na URL da página.');
-        }
-        if (response.status === 405) {
-          throw new Error('Método não permitido pela API. Verifique se a URL da API e o backend estão corretos e se o endpoint aceita a requisição atual.');
-        }
-        throw new Error(message);
+      if (/Método não permitido|405/.test(lastError || '')) {
+        throw new Error('Método não permitido pela API. Verifique se a URL da API e o backend estão corretos e se o endpoint aceita a requisição atual.');
       }
 
-      return payload;
+      if (/API não encontrada|404/.test(lastError || '')) {
+        throw new Error('API não encontrada. Inicie o backend em http://127.0.0.1:5000, use o mesmo host do servidor ou passe ?api=http://IP_DO_SERVIDOR:5000 na URL da página.');
+      }
+
+      if (lastError) {
+        throw new Error(lastError);
+      }
+
+      throw new Error('O servidor da aplicação não está disponível. Inicie o backend e tente novamente.');
     }
 
     function readableError(error) {
@@ -832,7 +880,7 @@
       const completed = orders.filter(order => order.status === 'Concluído').length;
       const revenue = orders.reduce((sum, order) => sum + Number(order.price || 0), 0);
 
-      const cards = state.user?.role === 'manager'
+      const cards = state.user && state.user.role === 'manager'
         ? [
             { label: 'Pedidos', value: total },
             { label: 'Pendentes', value: pending },
@@ -986,7 +1034,7 @@
           const select = document.querySelector(`[data-role="status-select"][data-id="${orderId}"]`);
           const deadlineInput = document.querySelector(`[data-role="deadline-input"][data-id="${orderId}"]`);
           const priceInput = document.querySelector(`[data-role="price-input"][data-id="${orderId}"]`);
-          const status = (select?.value || '').trim();
+          const status = ((select && select.value) || '').trim();
           const deadline = deadlineInput && deadlineInput.value ? deadlineInput.value : undefined;
           const price = priceInput && priceInput.value !== '' ? Number(priceInput.value) : undefined;
           if (!status) return;
@@ -1053,7 +1101,7 @@
         const data = await api('/api/orders');
         state.orders = data.orders || [];
         renderDashboardSummary();
-        if (state.user?.role === 'manager') {
+        if (state.user && state.user.role === 'manager') {
           renderManagerOrders(state.orders);
         } else {
           renderClientOrders(state.orders);
@@ -1133,6 +1181,18 @@
       }
     });
 
+    (async () => {
+      try {
+        const detected = await detectApiBaseUrl();
+        setApiStatus(`Conexão atual: <strong>${detected}</strong>`);
+        if (document.getElementById('apiUrlInput')) {
+          document.getElementById('apiUrlInput').value = detected;
+        }
+      } catch (error) {
+        setApiStatus('<strong>Não foi possível detectar a API automaticamente.</strong>');
+      }
+    })();
+
     document.getElementById('registerForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = new FormData(event.target);
@@ -1210,9 +1270,9 @@
         });
 
         renderDashboardSummary();
-        if (state.user?.role === 'manager') {
+        if (state.user && state.user.role === 'manager') {
           renderManagerOrders(state.orders);
-        } else if (state.user?.role === 'client') {
+        } else if (state.user && state.user.role === 'client') {
           renderClientOrders(state.orders);
         }
       });
@@ -1248,7 +1308,7 @@
     });
 
     setInterval(() => {
-      if (state.user?.role === 'manager') {
+      if (state.user && state.user.role === 'manager') {
         loadOrders().catch(() => {});
       }
     }, ORDER_REFRESH_MS);
