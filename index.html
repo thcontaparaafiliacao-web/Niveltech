@@ -743,12 +743,18 @@
         if (variant.url.includes('undefined')) continue;
 
         try {
-          const response = await fetch(variant.url, {
+          const requestOptions = {
             ...options,
             method: variant.method,
             credentials: 'include',
             headers: requestHeaders
-          });
+          };
+
+          if (variant.method === 'GET' || variant.method === 'HEAD') {
+            delete requestOptions.body;
+          }
+
+          const response = await fetch(variant.url, requestOptions);
 
           const text = await response.text();
           let payload = {};

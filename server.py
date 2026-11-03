@@ -15,9 +15,9 @@ DB_PATH = BASE_DIR / "niveltech.db"
 app = Flask(__name__, static_folder=".", static_url_path="")
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "niveltech-demo-secret")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "None"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() in {"1", "true", "yes", "on"}
-app.config["REMEMBER_COOKIE_SAMESITE"] = "None"
+app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes", "on"}
+app.config["REMEMBER_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
 app.config["REMEMBER_COOKIE_SECURE"] = app.config["SESSION_COOKIE_SECURE"]
 
 ALLOWED_ORIGINS = {
