@@ -550,15 +550,28 @@
       const hostname = window.location.hostname || '127.0.0.1';
       const port = window.location.port;
       const candidates = new Set();
+      const protocols = [protocol];
 
-      if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-        candidates.add(`${protocol}//${hostname}:5000`);
-        candidates.add(`${protocol}//${hostname}:8000`);
-        candidates.add(`${protocol}//${hostname}:3000`);
+      if (protocol === 'https:') {
+        protocols.push('http:');
+      } else if (protocol === 'http:') {
+        protocols.push('https:');
       }
 
-      if (hostname && port) {
-        candidates.add(`${protocol}//${hostname}:${port}`);
+      protocols.forEach(candidateProtocol => {
+        if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '::1') {
+          candidates.add(`${candidateProtocol}//${hostname}:5000`);
+          candidates.add(`${candidateProtocol}//${hostname}:8000`);
+          candidates.add(`${candidateProtocol}//${hostname}:3000`);
+        }
+
+        if (hostname && port) {
+          candidates.add(`${candidateProtocol}//${hostname}:${port}`);
+        }
+      });
+
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+        ['http://127.0.0.1:5000', 'http://localhost:5000', 'http://127.0.0.1:8000', 'http://localhost:8000', 'http://127.0.0.1:3000', 'http://localhost:3000', 'https://127.0.0.1:5000', 'https://localhost:5000'].forEach(candidate => candidates.add(candidate));
       }
 
       return Array.from(candidates);
@@ -594,28 +607,12 @@
       if (localBackendStartupAttempted) return false;
       localBackendStartupAttempted = true;
 
-      const scriptPath = 'file:///d:/Empresa/start_app.bat';
-      const serverUrl = 'http://127.0.0.1:5000';
+      const fallbackUrl = 'http://127.0.0.1:5000';
       setApiStatus('<strong>Iniciando o backend automaticamente...</strong>');
 
-      try {
-        const opened = window.open(scriptPath, '_self');
-        if (opened === null) {
-          try {
-            window.location.href = scriptPath;
-          } catch (error) {
-            window.location.href = serverUrl;
-          }
-        }
-        return true;
-      } catch (error) {
-        try {
-          window.location.href = scriptPath;
-        } catch (fallbackError) {
-          window.location.href = serverUrl;
-        }
-        return true;
-      }
+      apiBaseUrl = fallbackUrl;
+      localStorage.setItem('niveltech_api_base_url', fallbackUrl);
+      return true;
     }
 
     function normalizeApiBase(value) {
@@ -623,10 +620,19 @@
       let normalized = String(value).trim();
       if (!normalized) return '';
       normalized = normalized.replace(/\/+$/, '');
-      if (!/^https?:\/\//i.test(normalized)) {
-        normalized = `https://${normalized}`;
+
+      if (/^https?:\/\//i.test(normalized)) {
+        return normalized;
       }
-      return normalized;
+
+      const host = normalized.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
+      const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('172.');
+
+      if (isLocalHost || /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$/i.test(host)) {
+        return `http://${normalized}`;
+      }
+
+      return `https://${normalized}`;
     }
 
     function setApiStatus(message) {
@@ -731,6 +737,9 @@
         const message = payload.error || payload.message || `Erro ao processar a requisição (${response.status}).`;
         if (response.status === 404) {
           throw new Error('API não encontrada. Inicie o backend em http://127.0.0.1:5000, use o mesmo host do servidor ou passe ?api=http://IP_DO_SERVIDOR:5000 na URL da página.');
+        }
+        if (response.status === 405) {
+          throw new Error('Método não permitido pela API. Verifique se a URL da API e o backend estão corretos e se o endpoint aceita a requisição atual.');
         }
         throw new Error(message);
       }
